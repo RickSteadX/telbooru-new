@@ -298,6 +298,22 @@ class GelbooruBot:
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
+        
+        # Error handler
+        self.application.add_error_handler(self.error_handler)
+    
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle errors in the bot."""
+        logger.error(f"Exception while handling an update: {context.error}")
+        
+        # Try to notify the user
+        try:
+            if update and update.effective_message:
+                await update.effective_message.reply_text(
+                    "❌ An error occurred while processing your request. Please try again."
+                )
+        except:
+            pass
     
     def _create_main_menu_keyboard(self) -> InlineKeyboardMarkup:
         """Create main menu keyboard."""
@@ -559,11 +575,24 @@ Need more help? Visit: https://gelbooru.com/index.php?page=help
                 await status_message.edit_text("❌ No posts to display.")
             return
         
-        # Prepare media group
+        # Prepare media group with validation
         media_group = []
+        valid_posts = []
+        
         for i, post in enumerate(current_posts[:10]):  # Telegram limit: 10 media per group
+            # Validate URL
+            file_url = post.file_url
+            if not file_url or not file_url.startswith(('http://', 'https://')):
+                logger.warning(f"Invalid URL for post {post.id}: {file_url}")
+                continue
+            
+            # Skip if URL is too long or contains invalid characters
+            if len(file_url) > 2048:
+                logger.warning(f"URL too long for post {post.id}")
+                continue
+            
             caption = None
-            if i == 0:  # Add caption to first media
+            if len(media_group) == 0:  # Add caption to first valid media
                 caption = (
                     f"📊 **Search Results**\n"
                     f"Found {len(session.posts)} posts\n"
@@ -571,12 +600,24 @@ Need more help? Visit: https://gelbooru.com/index.php?page=help
                     f"Tap buttons below to navigate"
                 )
             
-            # Determine media type
-            file_url = post.file_url
-            if file_url.endswith(('.mp4', '.webm')):
-                media_group.append(InputMediaVideo(media=file_url, caption=caption, parse_mode=ParseMode.MARKDOWN))
-            else:
-                media_group.append(InputMediaPhoto(media=file_url, caption=caption, parse_mode=ParseMode.MARKDOWN))
+            # Determine media type and add to group
+            try:
+                if file_url.endswith(('.mp4', '.webm', '.gif')):
+                    # For videos, don't use parse_mode in caption to avoid issues
+                    media_group.append(InputMediaVideo(media=file_url, caption=caption))
+                else:
+                    # For photos
+                    media_group.append(InputMediaPhoto(media=file_url, caption=caption))
+                valid_posts.append(post)
+            except Exception as e:
+                logger.warning(f"Error preparing media for post {post.id}: {e}")
+                continue
+        
+        # If no valid media, fall back to text
+        if not media_group:
+            logger.warning("No valid media URLs found, falling back to text")
+            await self._send_search_results_text(update, context, user_id, status_message)
+            return
         
         # Delete status message if exists
         if status_message:
@@ -596,7 +637,7 @@ Need more help? Visit: https://gelbooru.com/index.php?page=help
             # Send keyboard separately
             keyboard = self._create_search_results_keyboard(user_id, show_album_button=False)
             result_text = (
-                f"📸 **Showing {len(current_posts)} of {len(session.posts)} results**\n"
+                f"📸 **Showing {len(valid_posts)} of {len(session.posts)} results**\n"
                 f"{session.get_page_info()}\n\n"
                 f"Use the buttons below to navigate through results."
             )
@@ -618,13 +659,14 @@ Need more help? Visit: https://gelbooru.com/index.php?page=help
         except Exception as e:
             logger.error(f"Error sending media group: {e}")
             # Fallback to text-based results
-            await self._send_search_results_text(update, context, user_id)
+            await self._send_search_results_text(update, context, user_id, status_message)
     
     async def _send_search_results_text(
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-        user_id: int
+        user_id: int,
+        status_message=None
     ):
         """Send search results as text (fallback)."""
         session = self.search_sessions.get(user_id)
@@ -636,6 +678,7 @@ Need more help? Visit: https://gelbooru.com/index.php?page=help
         result_text = f"📊 **Search Results**\n"
         result_text += f"Found {len(session.posts)} posts\n"
         result_text += f"{session.get_page_info()}\n\n"
+        result_text += f"_(Media album unavailable, showing text links)_\n\n"
         
         for i, post in enumerate(current_posts, 1):
             result_text += f"{i}. **Post #{post.id}**\n"
@@ -643,20 +686,54 @@ Need more help? Visit: https://gelbooru.com/index.php?page=help
             result_text += f"   Score: {post.score}\n"
             result_text += f"   🔗 [View]({post.file_url})\n\n"
         
-        keyboard = self._create_search_results_keyboard(user_id)
+        keyboard = self._create_search_results_keyboard(user_id, show_album_button=True)
         
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                result_text,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.MARKDOWN
-            )
-        else:
-            await update.message.reply_text(
-                result_text,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.MARKDOWN
-            )
+        # Delete status message if exists
+        if status_message:
+            try:
+                await status_message.delete()
+            except:
+                pass
+        
+        try:
+            if update.callback_query:
+                # Try to edit message, but if it fails, send a new one
+                try:
+                    await update.callback_query.edit_message_text(
+                        result_text,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.MARKDOWN,
+                        disable_web_page_preview=True
+                    )
+                except Exception as e:
+                    # If edit fails, send new message
+                    logger.warning(f"Could not edit message, sending new one: {e}")
+                    chat_id = update.effective_chat.id
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=result_text,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.MARKDOWN,
+                        disable_web_page_preview=True
+                    )
+            else:
+                await update.message.reply_text(
+                    result_text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN,
+                    disable_web_page_preview=True
+                )
+        except Exception as e:
+            logger.error(f"Error sending text results: {e}")
+            # Last resort - send simple message
+            simple_text = f"Found {len(session.posts)} results. Use /search to try again."
+            if update.callback_query:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=simple_text
+                )
+            else:
+                await update.message.reply_text(simple_text)
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle inline button callbacks."""
@@ -911,9 +988,9 @@ def main():
     import os
     
     # Get credentials from environment
-    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    gelbooru_api_key = os.getenv("GELBOORU_API_KEY")
-    gelbooru_user_id = os.getenv("GELBOORU_USER_ID")
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    gelbooru_api_key = os.environ.get("GELBOORU_API_KEY")
+    gelbooru_user_id = os.environ.get("GELBOORU_USER_ID")
     
     if not telegram_token:
         logger.error("TELEGRAM_BOT_TOKEN environment variable not set")
