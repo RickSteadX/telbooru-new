@@ -50,6 +50,7 @@ WORKDIR /app
 # Copy application files
 COPY gelbooru_api.py .
 COPY telegram_bot.py .
+COPY telegram_bot_redesigned.py .
 COPY example_usage.py .
 COPY test_api.py .
 COPY demo.py .
@@ -74,4 +75,6 @@ USER 1000:1000
 # EXPOSE 8080
 
 # Define the command to run the application
-CMD ["python", "telegram_bot.py"]
+# Use telegram_bot_redesigned.py for the new button-focused interface
+# Or use telegram_bot.py for the original command-based interface
+CMD ["python", "telegram_bot_redesigned.py"]
