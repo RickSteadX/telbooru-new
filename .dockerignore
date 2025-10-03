@@ -1,0 +1,52 @@
+# .dockerignore file to exclude unnecessary files from Docker build context
+# This reduces build time and image size
+
+# Git files
+.git
+.gitignore
+.github
+
+# Python cache and bytecode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache
+.coverage
+.pytest_cache/
+
+# Virtual environment
+venv/
+env/
+.venv/
+.ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+log/
+
+# Data directory (will be mounted as volume)
+data/
+
+# Output directories
+outputs/
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Documentation build artifacts
+docs/_build/

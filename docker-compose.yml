@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  gelbooru-bot:
+    build: .
+    container_name: gelbooru-bot
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GELBOORU_API_KEY=${GELBOORU_API_KEY}
+      - GELBOORU_USER_ID=${GELBOORU_USER_ID}
+    volumes:
+      # Mount settings directory with proper SELinux context
+      # Use :Z for private volume labeling (only this container can access)
+      - ./data:/app/data:Z
+    # Security options for SELinux
+    security_opt:
+      # Only disable SELinux if absolutely necessary
+      # - label=disable
+      # Better option: Use custom SELinux policy if needed
+      - label=type:container_t
+    # If you need to share this volume with other containers, use :z instead of :Z
+    # For read-only access, add :ro flag
+    # For no SELinux labeling, add :z (shared) or :Z (private) without modifying labels
+
+  # Example of a second service that might share data
+  # gelbooru-bot-backup:
+  #   image: busybox
+  #   volumes:
+  #     # Sharing the same volume with :z flag
+  #     - ./data:/backup/data:z
+  #   command: sh -c "while true; do sleep 86400; done"
+
+volumes:
+  data:
+    # External volume for persistent data
+    # This ensures data persists even if containers are destroyed
+    external: false
